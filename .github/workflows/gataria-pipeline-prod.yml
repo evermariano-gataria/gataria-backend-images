@@ -1,0 +1,57 @@
+name: Gataria CI/CD Prod
+on:
+  release:
+    branches:
+      - main
+    types:
+      - published
+jobs:
+  build-prod:
+    name: Build Prod
+    runs-on: self-hosted
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v3
+      - name: Docker login
+        uses: docker/login-action@v1
+        with: 
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Docker build
+        run: docker build -t evermariano/gataria-backend-images:${GITHUB_REF##*/} .
+      - name: docker push
+        run: docker push evermariano/gataria-backend-images:${GITHUB_REF##*/}
+
+  test-prod:
+    name: Test prod
+    runs-on: self-hosted
+    needs: build-prod
+    env:
+      CATAPI_URL: ${{ secrets.CATAPI_URL }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+      - name: Install dependencies
+        run: npm install
+      - name: running tests
+        run: npm test
+
+  deploy-prod:
+    name: Deploy prod
+    runs-on: self-hosted
+    needs: test-prod
+    container:
+      image: evermariano/gataria-deploy:1.0.0
+      credentials:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+    steps:
+      - name: Add ChartMuseum Repo
+        run: helm repo add gataria-charts http://chartmuseum:8080
+      - name: Helm update repo
+        run: helm repo update
+      - name: Deploy main
+        run: helm upgrade gataria-backend-images gataria-charts/gataria-backend-images -n prod --set "image.tag=${GITHUB_REF##*/}" --set "ingress.hosts[0].host=gataria.example" --set "ingress.hosts[0].paths[0].path=/images" --set "ingress.hosts[0].paths[0].pathType=Prefix" --set "autoscaling.enable=true" || helm install gataria-backend-images gataria-charts/gataria-backend-images -n prod --set "image.tag=${GITHUB_REF##*/}" --set "ingress.hosts[0].host=gataria.example" --set "ingress.hosts[0].paths[0].path=/images" --set "ingress.hosts[0].paths[0].pathType=Prefix" --set "autoscaling.enable=true"
